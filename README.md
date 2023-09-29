@@ -60,9 +60,9 @@ The different experiments of the paper can be launched as follows:
 
                             python experiment_symmetric_pTTQ.py --parameters_file ../../parameters_files/MNIST/mnist_pruning_ttq_symmetric.json
 
-- **Experiment 4**: Launch *src/Experiments/experiment_pTTQ.py* with the parameters files having *granularity* in their names. Example (execution from the folder *src/Experiments/*): 
+- **Experiment 4**: Launch *src/Experiments/experiment_global_pTTQ.py* with the parameters files having *granularity* in their names. Example (execution from the folder *src/Experiments/*): 
 
-                            python experiment_pTTQ.py --parameters_file ../../parameters_files/MNIST/mnist_pruning_ttq_global_granularity.json
+                            python experiment_global_pTTQ.py --parameters_file ../../parameters_files/MNIST/mnist_pruning_ttq_global_granularity.json
     
 ### b. Plot results.
 
