@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-    Compress a pre-trained model using TTQ.
+    Compress a pre-trained model using pruned TTQ.
 
     Options:
     --------
@@ -51,7 +51,7 @@ from src.Models.Transformers.Transformer_Encoder_RawAudioMultiChannelCNN import 
 class Experiment(ExperimentTTQ):
     def __init__(self, parameters_exp):
         """
-            Compress a pre-trained model using TTQ.
+            Compress a pre-trained model using pruned TTQ with global hyperparameters.
 
             Arguments:
             ----------
@@ -63,11 +63,6 @@ class Experiment(ExperimentTTQ):
         # Parent constructor
         super().__init__(parameters_exp)
 
-        # Some attributes
-        # Optimizing the pruning function parameters
-        if ('learn_pruning_function_params' not in parameters_exp):
-            parameters_exp['learn_pruning_function_params'] = True
-        self.learn_pruning_function_params = parameters_exp['learn_pruning_function_params']
         # Optimize alpha bool
         if ('optimize_alpha' not in parameters_exp):
             parameters_exp['optimize_alpha'] = False
@@ -89,10 +84,10 @@ class Experiment(ExperimentTTQ):
 
         # Initial Threshold hyper-parameter for the pruning function
         if ('init_x' not in parameters_exp):
-            parameters_exp['init_x'] = 5e-1
+            parameters_exp['init_x'] = 0.5
         self.init_x = parameters_exp['init_x']
         if ('init_y' not in parameters_exp):
-            parameters_exp['init_y'] = 5e-1
+            parameters_exp['init_y'] = 0.5
         self.init_y = parameters_exp['init_y']
 
         # Pruning function
@@ -115,8 +110,6 @@ class Experiment(ExperimentTTQ):
             self.optimizer_pruning_params = torch.optim.Adamax
         elif (parameters_exp['optimizer_pruning_params'].lower() == 'adam'):
             self.optimizer_pruning_params = torch.optim.Adam
-        else:
-            raise ValueError("Optimizer {} is not valid to optimize the pruning parameters".format(parameters_exp['optimizer_pruning_params']))
 
         # Parameters of the exp
         self.parameters_exp = parameters_exp
@@ -126,19 +119,17 @@ class Experiment(ExperimentTTQ):
     def quantize(self, kernel, w_p, w_n):
         """
         Function from inspired from https://github.com/TropComplique/trained-ternary-quantization/blob/master/utils/quantization.py
-        ATTENTION: it is not the same function as we change the method to quantize
-        the weights.
 
         Return quantized weights of a layer.
         Only possible values of quantized weights are: {zero, w_p, -w_n}.
         """
-        # Getting the pruned kernel
         pruned_kernel = self.pruning_function(kernel, self.alpha, self.a, self.b)
         A = (pruned_kernel > 0).float()
         B = (pruned_kernel < 0).float()
         return w_p*A + (-w_n*B)
 
     # Gradients computation
+    # FUNCTION USED BEFORE SWAPPING TO TANH INSTEAD OF SIGMOID !!!
     def get_grads(self, kernel_grad, kernel, w_p, w_n):
         """
         Function from: https://github.com/TropComplique/trained-ternary-quantization/blob/master/utils/quantization.py
@@ -157,17 +148,19 @@ class Experiment(ExperimentTTQ):
             6. gradient for alpha
         """
         # Grads of w_p and w_n
+        # pruned_kernel = self.pruning_function(kernel, alpha=self.alpha, a=self.a, b=self.b)
         pruned_kernel = self.pruning_function(kernel, self.alpha, self.a, self.b)
         A = (pruned_kernel > 0).float()
         B = (pruned_kernel < 0).float()
         c = torch.ones(pruned_kernel.size()).to(self.device) - A - B
+        # scaled kernel grad and grads for scaling factors (w_p, w_n)
         grad_fp_kernel = w_p*A*kernel_grad + w_n*B*kernel_grad + 1.0*c*kernel_grad
         grad_wp = (A*kernel_grad).sum()
         grad_wn = (B*kernel_grad).sum()
 
         # Grads
         if (self.pruning_function_type == 'manessi_asymmetric_pTTQ'):
-            # Grads of the thresholds hyperparameters
+            # Grands thresholds
             kernel_mean, kernel_std = kernel.mean(), kernel.std()
             delta_min = (kernel_mean + self.a*kernel_std).abs()
             delta_max = (kernel_mean + self.b*kernel_std).abs()
@@ -188,19 +181,18 @@ class Experiment(ExperimentTTQ):
         elif (self.pruning_function_type == 'manessi_asymmetric'):
             # Grads of w_p and w_n
             grad_a = (
-                        torch.heaviside((-kernel-self.a).float(),  torch.tensor([0]).float().to(self.device) )\
+                        torch.heaviside((-kernel-self.a).float(),  torch.tensor([0]).float().to(self.device))\
                         - torch.nn.functional.sigmoid(self.alpha*(-kernel-self.a))\
                         + self.a*self.alpha*torch.nn.functional.sigmoid(self.alpha*(-kernel-self.a))*(1-torch.nn.functional.sigmoid(self.alpha*(-kernel-self.a)))
                      ).sum()
             grad_b = (
-                        -torch.heaviside((kernel-self.b).float(),  torch.tensor([0]).float().to(self.device) )\
+                        -torch.heaviside((kernel-self.b).float(),  torch.tensor([0]).float().to(self.device))\
                         + torch.nn.functional.sigmoid(self.alpha*(kernel-self.b))\
                         - self.b*self.alpha*torch.nn.functional.sigmoid(self.alpha*(kernel-self.b))*(1-torch.nn.functional.sigmoid(self.alpha*(kernel-self.b)))
                      ).sum()
             # Grads of alpha
             grad_alpha = (self.b*(kernel-self.b)*torch.nn.functional.sigmoid(self.alpha*(kernel-self.b))*(1-torch.nn.functional.sigmoid(self.alpha*(kernel-self.b)))\
                         + self.a*(kernel+self.a)*torch.nn.functional.sigmoid(self.alpha*(-kernel-self.a))*(1-torch.nn.functional.sigmoid(self.alpha*(-kernel-self.a)))).sum()
-
 
         else:
             raise ValueError("Pruning function {} is not valid".format(self.pruning_function))
@@ -212,7 +204,6 @@ class Experiment(ExperimentTTQ):
 
     def initial_thresholds(self, kernel):
         return self.init_x, self.init_y
-
     def createOptimizer(self, model_params_dict):
         """
             Creation of the optimizer(s)
@@ -243,21 +234,20 @@ class Experiment(ExperimentTTQ):
         # Kernels to be quantized
         kernels_to_quantize = [kernel for kernel in model_params_dict['ToQuantize']['params']]
 
+        # Getting the initial thresholds
+        init_a, init_b = self.initial_thresholds(None)
+        self.a, self.b = init_a, init_b
+
+        # Getting the initial alpha
+        if (self.optimize_alpha):
+            alpha_initial = self.initial_alpha(None)
+            self.alpha = alpha_initial
+
         # Initial Quantization
         for k, k_fp in zip(kernels_to_quantize, kernels_to_quantize_fp_copy):
             # Getting the initial scaling factors
             w_p_initial, w_n_initial = self.initial_scales(k_fp.data)
             initial_scaling_factors += [(w_p_initial, w_n_initial)]
-
-            # Getting the initial thresholds
-            self.a, self.b = self.initial_thresholds(k_fp.data)
-            initial_thresh += [(self.a, self.b)]
-
-            # Getting the initial alpha
-            if (self.optimize_alpha):
-                alpha_initial = self.initial_alpha(k_fp.data)
-                initial_alphas += [alpha_initial]
-                self.alpha = alpha_initial
 
             # Doing quantization
             k.data = self.quantize(k_fp.data, w_p_initial, w_n_initial)
@@ -273,25 +263,21 @@ class Experiment(ExperimentTTQ):
                                          )
         # Thresholds
         self.optimizer_t = self.optimizer_pruning_params(
-                                            [Variable(torch.FloatTensor([x, y]).to(self.device), requires_grad=True)
-                                             for x, y in initial_thresh],
-                                            lr=self.lr_thresh
+                                                [Variable(torch.FloatTensor([init_a, init_b]).to(self.device), requires_grad=True)],
+                                                lr=self.lr_thresh
                                          )
         self.sched_t = torch.optim.lr_scheduler.CosineAnnealingLR(self.optimizer_t, T_max=10, eta_min=1e-7, last_epoch=-1, verbose=True)
-
 
         # Alpha value
         if (self.optimize_alpha):
             self.optimizer_alpha = self.optimizer_pruning_params(
-                                                [Variable(torch.FloatTensor([alpha]).to(self.device), requires_grad=True)
-                                                 for alpha in initial_alphas],
-                                                lr=self.lr_alpha
+                                                        [Variable(torch.FloatTensor([alpha_initial]).to(self.device), requires_grad=True)],
+                                                        lr=self.lr_alpha
                                              )
             # Creating learning rate scheduler for the alpha values
             self.sched_alpha = torch.optim.lr_scheduler.CosineAnnealingLR(self.optimizer_alpha, T_max=10, eta_min=1e-7, last_epoch=-1, verbose=True)
         else:
             self.optimizer_alpha = None
-
 
     def apply_lr_sched(self, mean_loss_val_fixed_epoch=None):
         """
@@ -300,12 +286,12 @@ class Experiment(ExperimentTTQ):
         # Applying the generic lr scheduler strategy
         super().apply_lr_sched(mean_loss_val_fixed_epoch)
 
-        # # Applying lr scheduler for the thresholds
-        # self.sched_t.step()
-        #
-        # # Applying lr scheduler for the alpha values
-        # if (self.optimize_alpha):
-        #     self.sched_alpha.step()
+        # Applying lr scheduler for the thresholds
+        self.sched_t.step()
+
+        # Applying lr scheduler for the alpha values
+        if (self.optimize_alpha):
+            self.sched_alpha.step()
 
 
     def optimize_step(self, loss_value):
@@ -332,13 +318,7 @@ class Experiment(ExperimentTTQ):
         # Getting the scaling factors of the kernels
         scaling_factors = self.optimizer_sf.param_groups[0]['params']
 
-        # Getting the thresholds
-        thresholds = self.optimizer_t.param_groups[0]['params']
-
-        # Getting the alpha value if it is optimized
-        if (self.optimize_alpha):
-            alphas = self.optimizer_alpha.param_groups[0]['params']
-
+        a_grad_tot, b_grad_tot, alpha_grad_tot = 0, 0, 0
         for i in range(len(quantized_kernels)):
             # Current quantized kernel
             k = quantized_kernels[i]
@@ -350,17 +330,11 @@ class Experiment(ExperimentTTQ):
             f = scaling_factors[i]
             w_p, w_n = f.data[0], f.data[1]
 
-            # Getting the thresholds used for pruning
-            t = thresholds[i]
-            self.a, self.b = t.data[0], t.data[1]
-
-            # Getting the alpha values used for pruning
-            if (self.optimize_alpha):
-                alpha_val = alphas[i]
-                self.alpha = alpha_val.data[0]
-
             # Getting the gradients
             k_fp_grad, w_p_grad, w_n_grad, a_grad, b_grad, alpha_grad = self.get_grads(k.grad.data, k_fp.data, w_p, w_n)
+            a_grad_tot += a_grad
+            b_grad_tot += b_grad
+            alpha_grad_tot += alpha_grad
 
             # Gradient for the full precision kernels
             k_fp.grad = Variable(k_fp_grad)
@@ -371,12 +345,16 @@ class Experiment(ExperimentTTQ):
             # Gradient for the scaling factors
             f.grad = Variable(torch.FloatTensor([w_p_grad, w_n_grad]).to(self.device))
 
-            # Gradient for the thresholds
-            t.grad = Variable(torch.FloatTensor([a_grad, b_grad]).to(self.device))
+        # Gradient for the thresholds
+        thresholds_params = self.optimizer_t.param_groups[0]['params'][0]
+        thresholds_params.grad = Variable(torch.FloatTensor([a_grad_tot, b_grad_tot]).to(self.device))
+        self.a, self.b = thresholds_params.data[0], thresholds_params.data[1]
 
-            # Gradient for the alpha value
-            if (self.optimize_alpha):
-                alpha_val.grad = Variable(torch.FloatTensor([alpha_grad]).to(self.device))
+        # Gradient for the alpha value if it is optimized
+        if (self.optimize_alpha):
+            alpha_param = self.optimizer_alpha.param_groups[0]['params'][0]
+            alpha_param.grad = Variable(torch.FloatTensor([alpha_grad_tot]).to(self.device))
+            self.alpha = alpha_param.data[0]
 
         # Update all the parameters that should not be quantized (usually the first and last
         # layers, as well as the batch norm parameters)
@@ -388,29 +366,23 @@ class Experiment(ExperimentTTQ):
         # Updating the scaling factor parameters
         self.optimizer_sf.step()
 
-        if (self.learn_pruning_function_params):
-            # Updating the threshold parameters
-            self.optimizer_t.step()
+        # Updating the threshold parameters
+        self.optimizer_t.step()
 
-            # Updating the alpha parameter
-            if (self.optimize_alpha):
-                self.optimizer_alpha.step()
+        # Updating the alpha parameter
+        if (self.optimize_alpha):
+            self.optimizer_alpha.step()
 
         # Ensuring that the values of the thresholds and alphas are positive using a clamp funcion
-        for i in range(len(quantized_kernels)):
-            # Thresholds
-            t = thresholds[i]
-            # Forcing positive values if exponentiation is not in function !!!!!!!
-            if ('_exp' not in self.pruning_function_type.lower()) and ('attq' not in self.pruning_function_type.lower()):
-                t.data[0], t.data[1] = torch.clamp(t.data[0], min=1e-8), torch.clamp(t.data[1], min=1e-8)
-
-            # Ensuring that the value of alpha is positive using a clamp funtion
-            if (self.optimize_alpha):
-                # Current quantized kernel i
-                alpha_val = alphas[i]
-                # Forcing positive values if exponentiation is not in function !!!!!!!
-                if ('_exp' not in self.pruning_function_type.lower()):
-                    alpha_val.data[0] = torch.clamp(alpha_val.data[0], min=1e-8)
+        # Thresholds
+        thresholds_params = self.optimizer_t.param_groups[0]['params'][0]
+        thresholds_params.data[0], thresholds_params.data[1] = torch.clamp(thresholds_params.data[0], min=1e-5), torch.clamp(thresholds_params.data[1], min=1e-5)
+        self.a, self.b = thresholds_params.data[0], thresholds_params.data[1]
+        # Alpha value if it is optimized
+        if (self.optimize_alpha):
+            alpha_param = self.optimizer_alpha.param_groups[0]['params'][0]
+            alpha_param.data[0] = torch.clamp(alpha_param.data[0], min=1e-5)
+            self.alpha = alpha_param.data[0]
 
         # Quantize the updated full precision kernels
         for i in range(len(quantized_kernels)):
@@ -424,27 +396,20 @@ class Experiment(ExperimentTTQ):
             f = scaling_factors[i]
             w_p, w_n = f.data[0], f.data[1]
 
-            # Getting the thresholds used for pruning
-            t = thresholds[i]
-            self.a, self.b = t.data[0], t.data[1]
-
-            # Getting the alpha values used for pruning
-            if (self.optimize_alpha):
-                alpha_val = alphas[i]
-                self.alpha = alpha_val.data[0]
             k.data = self.quantize(k_fp.data, w_p, w_n)
 
     def gridSearch(self):
         """
             Does a grid search for some hyper-parameters
         """
-        lr_values = [self.lr]
-        lr_wn_wp_values = [self.lr_wn_wp]
-        init_x_values = [self.init_x]
-        init_y_values = [self.init_x]
-        lr_thresh_values = [self.lr_thresh]
-        alpha_values = [1, 10, 50, 80, 90, 100]
-        lr_alpha_values = [self.lr_alpha]
+        # Defining the values of the parameters to test
+        lr_values = [1e-4, 1e-5]
+        lr_wn_wp_values = [1e-2, 1e-3]
+        init_x_values = [1., 0.5]
+        init_y_values = [1., 0.5]
+        lr_thresh_values = [1e-1, 1e-2, 1e-3]
+        alpha_values = [1e4, 1e2]
+        lr_alpha_values = [1e-3, 1e-2, 1e-1]
 
         # Iterating over the different values of the hyper-parameters
         base_results_folder = self.results_folder
@@ -476,39 +441,43 @@ class Experiment(ExperimentTTQ):
 
         self.results_folder = base_results_folder
 
+
     def randomSearch(self):
         """
             Does a grid search for some hyper-parameters
         """
         # Defining the values of the parameters to test
-        lr_values = [1e-2, 1e-3, 1e-4, 1e-5]
-        init_x_values = [4, 3, 2, 1]
-        init_y_values = [4,  3, 2, 1]
-        alpha_values = [100, 500, 1000]
+        lr_values = [1e-1, 1e-2, 1e-3, 1e-4]
+        lr_wn_wp_values = [1e-1, 1e-2, 1e-3, 1e-4]
+        init_x_values = [0.1, 0.5, 1.0, 2.0]
+        init_y_values = [0.1, 0.5, 1.0, 2.0]
+        lr_thresh_values = [10, 1, 1e-1]
+        alpha_values = [50, 10, 1]
+        lr_alpha_values = [10, 1, 1e-1]
 
         # Iterating over the different values of the hyper-parameters
         nb_tested_hyper_params = 0
-        nb_hyper_params_to_test = len(lr_values)*len(init_x_values)*len(init_y_values)*len(alpha_values)
+        nb_hyper_params_to_test = len(lr_values)*len(lr_wn_wp_values)*len(init_x_values)*len(init_y_values)*len(lr_thresh_values)*len(alpha_values)*len(lr_alpha_values)
         seen_hyper_params = []
         base_results_folder = self.results_folder
         while nb_tested_hyper_params < nb_hyper_params_to_test:
             lr = random.choice(lr_values)
+            lr_wn_wp = random.choice(lr_wn_wp_values)
             init_x = random.choice(init_x_values)
             init_y = random.choice(init_y_values)
+            lr_thresh = random.choice(lr_thresh_values)
             alpha = random.choice(alpha_values)
-            lr_wn_wp = lr
-            lr_thresh = lr
-            lr_alpha = lr
+            lr_alpha = random.choice(lr_alpha_values)
             hyper_params = (lr, lr_wn_wp, init_x, init_y, lr_thresh, alpha, lr_alpha)
             if (hyper_params not in seen_hyper_params) and (init_x <= init_y):
                 # Updating the hyper-paramet of the experiment
                 self.lr = lr
                 self.lr_wn_wp = lr_wn_wp
-                self.lr_thresh = lr_thresh
-                self.lr_alpha = lr_alpha
                 self.init_x = init_x
                 self.init_y = init_y
+                self.lr_thresh = lr_thresh
                 self.alpha = alpha
+                self.lr_alpha = lr_alpha
 
                 # Creating the datasets folder
                 current_datetime = datetime.now().strftime("%d.%m.%Y_%H:%M:%S")
@@ -546,7 +515,7 @@ def main():
     # Construct the argument parser
     ap = argparse.ArgumentParser()
     # Add the arguments to the parser
-    default_parameters_file = "../../parameters_files/MNIST/mnist_pTTQ.json"
+    default_parameters_file = "../../parameters_files/MNIST/experiment_global_pTTQ.json"
     ap.add_argument('--parameters_file', default=default_parameters_file, help="Parameters for the experiment", type=str)
     args = vars(ap.parse_args())
 
@@ -615,6 +584,16 @@ def main():
         else:
             print("\n\n\n\n=======> Doing RANDOM search <=======\n\n\n\n")
             exp.randomSearch()
+
+    # Saving the training parameters in the folder of the results
+    inc = 0
+    parameters_file = resultsFolder + '/params_exp/params' + '_'
+    while (os.path.isfile(parameters_file + str(inc) + '.pth')):
+        inc += 1
+    parameters_file = parameters_file + str(inc) +'.pth'
+    parameters_exp['audio_feature_shape'] = exp.audio_feature_shape
+    with open(parameters_file, "wb") as fp:   #Pickling
+        pickle.dump(parameters_exp, fp)
 
     # Saving the training parameters in the folder of the results
     inc = 0

@@ -1,9 +1,9 @@
 {
-  "exp_id": "ESR_2DCNN_aTTQ",
+  "exp_id": "ESR_2DCNN_pTTQ_Symmetric",
   "feature_type": "Spectrogram",
   "add_channel_dim": "True",
 
-  "dataset_type": "ESR",
+  "dataset_type": "EEGEpilepticSeizure",
   "binarizeDS": true,
 
   "n_fft": 32,
@@ -11,15 +11,19 @@
   "window": "blackman",
 
   "lr": 1e-3,
+  "lr_wn_wp": 1e-3,
+  "lr_thresh": 1e-2,
   "nb_repetitions": 1,
   "batch_size_train": 32,
   "batch_size_test": 32,
   "weight_decay": 1e-7,
-  "nb_epochs": 200,
+  "nb_epochs": 50,
   "loss_function": "CE",
 
-  "t_min": -3,
-  "t_max": 1,
+  "pruning_function_type": "manessi_asymmetric",
+  "alpha": 1e3,
+  "init_t": 1.0,
+  "optimize_alpha": false,
   "trained_fp_models_folder": "../../results/ESR_2D_CNN_FP/model/",
 
   "model_type": "2DCNN",

@@ -277,11 +277,42 @@ def pruning_function_manessi_asymmetric_pTTQ(x, alpha, t_min, t_max):
     # Defining the thresholds
     x_mean, x_std = x.mean(), x.std()
     delta_min = (x_mean + t_min*x_std).abs()
-    # delta_min = x_mean + t_min*x_std
     delta_max = (x_mean + t_max*x_std).abs()
-    # delta_max = x_mean + t_max*x_std
 
     # Computing the output
     res = relu(x-delta_max)+delta_max*sigmoid(alpha*(x-delta_max)) - relu(-x-delta_min)-delta_min*sigmoid(alpha*(-x-delta_min))
+
+    return res
+
+
+def pruning_function_asymmetric_manessi(x, alpha, a, b):
+    """
+        Function inspired from the work of Manessi et al. (2019)
+        Compute a pruning function of the input tensor x
+        based on two threshold a and b, at a "speed" alpha.
+        WARNING: there is not actual pruning that is done, but
+        the value of x is set very close to zero if it is
+        in an interval defined by a and b.
+
+        Arguments:
+        ----------
+        x: torch.tensor
+            Tensor to 'prune'
+        alpha: float
+            Hyper-parameter defining the 'speed' of the pruning.
+        a: float
+            NON-NEGATIVE threshold parameter of the 'pruning'
+        b: float
+            NON-NEGATIVE threshold parameter of the 'pruning'
+    """
+    # Verifying that the values of a and b are non-negative
+    if (type(a) != torch.Tensor) and (type(b) != torch.Tensor):
+        assert (a >= 0) and (b >= 0) # Cannot be used for tensors
+    # Defining the ReLU and Sigmoid functions
+    relu = torch.nn.ReLU()
+    sigmoid = torch.nn.Sigmoid()
+
+    # Computing the output
+    res = relu(x-b)+b*sigmoid(alpha*(x-b)) - relu(-x-a)-a*sigmoid(alpha*(-x-a))
 
     return res
