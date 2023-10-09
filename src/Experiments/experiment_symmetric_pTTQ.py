@@ -97,7 +97,7 @@ class Experiment(ExperimentTTQ):
         if (self.pruning_function_type.lower() == 'manessi_asymmetric'):
             self.pruning_function = pruning_function_asymmetric_manessi
         else:
-            raise ValueError("Pruning function {} is not valid".format(self.pruning_function))
+            raise ValueError("Pruning function {} is not valid".format(self.pruning_function_type))
 
         # Parameters of the exp
         self.parameters_exp = parameters_exp
@@ -161,7 +161,7 @@ class Experiment(ExperimentTTQ):
             grad_alpha = (self.t*(kernel-self.t)*torch.nn.functional.sigmoid(self.alpha*(kernel-self.t))*(1-torch.nn.functional.sigmoid(self.alpha*(kernel-self.t)))\
                         + self.t*(kernel+self.t)*torch.nn.functional.sigmoid(self.alpha*(-kernel-self.t))*(1-torch.nn.functional.sigmoid(self.alpha*(-kernel-self.t)))).sum()
         else:
-            raise NotImplementedError("Gradient computation for pruning function {} is not implemented yet.".format(self.pruning_function))
+            raise NotImplementedError("Gradient computation for pruning function {} is not implemented yet.".format(self.pruning_function_type))
         return grad_fp_kernel, grad_wp, grad_wn, grad_t, grad_alpha
 
     def initial_alpha(self, kernel):
@@ -473,7 +473,7 @@ def main():
     # Creating directory to save the results
     inc = 0
     current_datetime = datetime.now().strftime("%d.%m.%Y_%H:%M:%S")
-    resultsFolder = '../../../results/' + parameters_exp['exp_id'] + '_' + current_datetime
+    resultsFolder = '../../results/' + parameters_exp['exp_id'] + '_' + current_datetime
     while (os.path.isdir(resultsFolder+ '_' + str(inc))):
         inc += 1
     resultsFolder = resultsFolder + '_' + str(inc)

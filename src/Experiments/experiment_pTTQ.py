@@ -99,12 +99,13 @@ class Experiment(ExperimentTTQ):
         if ('pruning_function_type' not in parameters_exp):
             parameters_exp['pruning_function_type'] = 'manessi_asymmetric_pTTQ'
         self.pruning_function_type = parameters_exp['pruning_function_type']
-        if (self.pruning_function_type.lower() == 'manessi_asymmetric_pTTQ'):
+        if (self.pruning_function_type.lower() == 'manessi_asymmetric_pttq'):
             self.pruning_function = pruning_function_pTTQ
         elif (self.pruning_function_type.lower() == 'manessi_asymmetric'):
             self.pruning_function = pruning_function_asymmetric_manessi
         else:
-            raise ValueError("Pruning function {} is not valid".format(self.pruning_function))
+            p
+            raise ValueError("Pruning function {} is not valid".format(self.pruning_function_type))
 
         # Optimizer to use for thresholds and alpha
         if ('optimizer_pruning_params' not in parameters_exp):
@@ -203,7 +204,7 @@ class Experiment(ExperimentTTQ):
 
 
         else:
-            raise ValueError("Pruning function {} is not valid".format(self.pruning_function))
+            raise ValueError("Pruning function {} is not valid".format(self.pruning_function_type))
 
         return grad_fp_kernel, grad_wp, grad_wn, grad_a, grad_b, grad_alpha
 
@@ -570,7 +571,7 @@ def main():
     # Creating directory to save the results
     inc = 0
     current_datetime = datetime.now().strftime("%d.%m.%Y_%H:%M:%S")
-    resultsFolder = '../../../results/' + parameters_exp['exp_id'] + '_' + current_datetime
+    resultsFolder = '../../results/' + parameters_exp['exp_id'] + '_' + current_datetime
     while (os.path.isdir(resultsFolder+ '_' + str(inc))):
         inc += 1
     resultsFolder = resultsFolder + '_' + str(inc)

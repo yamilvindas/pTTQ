@@ -246,7 +246,7 @@ def get_params_groups_to_quantize(model, model_to_use):
     return params, names_params_to_be_quantized
 
 
-def pruning_function_manessi_asymmetric_pTTQ(x, alpha, t_min, t_max):
+def pruning_function_pTTQ(x, alpha, t_min, t_max):
     """
         Function inspired from the work of Manessi et al. (2019)
         Compute a pruning function of the input tensor x
