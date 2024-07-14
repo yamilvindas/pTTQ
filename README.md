@@ -2,7 +2,7 @@
 
 ## I) Introduction
 
-GitHub repository for the sumbission of the paper *Pruned trained ternary quantization for medical signal classification models* for Information Sciences.
+GitHub repository for the sumbission of the paper *Trainable pruned ternary quantization for medical signal classification models* for Neurocomputing.
 
 ## II) Configuration
 
